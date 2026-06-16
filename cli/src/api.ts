@@ -4,6 +4,21 @@ import path from 'path';
 const CONFIG_PATH = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.secret-manager-token.json');
 const BASE_URL = 'http://localhost:4000';
 
+// For GET and DELETE requests (No Content-Type header to avoid Fastify 400 errors)
+function getAuthHeader() {
+  const token = getSavedToken();
+  return { 'Authorization': `Bearer ${token}` };
+}
+
+// For POST and PUT requests (Includes Content-Type for JSON payloads)
+function getJsonHeaders() {
+  const token = getSavedToken();
+  return { 
+    'Authorization': `Bearer ${token}`, 
+    'Content-Type': 'application/json' 
+  };
+}
+
 // Internal helper to read the saved token
 function getSavedToken(): string | null {
   try {
@@ -18,18 +33,19 @@ function getSavedToken(): string | null {
 }
 
 // 1. Fetch authorized secrets from the backend
-export async function fetchSecrets() {
-  const token = getSavedToken();
-  if (!token) throw new Error('Not authenticated');
-
-  const response = await fetch(`${BASE_URL}/secrets`, {
-    headers: { 'Authorization': `Bearer ${token}` }
+export const fetchSecrets = async () => {
+  const res = await fetch(`${BASE_URL}/secrets`, { 
+    method: 'GET', 
+    headers: getAuthHeader() // 👈 Uses the body-less auth header helper
   });
 
-  if (!response.ok) throw new Error('Failed to fetch secrets');
-  const data = await response.json();
-  return data.secrets || [];
-}
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ error: 'Server error' }));
+    throw new Error(errData.error || `HTTP Error ${res.status}`);
+  }
+
+  return res.json();
+};
 
 // 2. Create a new secret pair
 export async function createSecret(key: string, value: string) {
@@ -81,14 +97,18 @@ export async function promoteUser(targetUserId: string) {
 }
 
 
-export const apiCreateUser = async (email: string) => fetch(`${BASE_URL}/admin/users`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ email }) });
-export const apiCreateTeam = async (name: string) => fetch(`${BASE_URL}/admin/teams`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ name }) });
-export const apiAssignUser = async (userId: string, teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}/members`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ targetUserId: userId }) });
-export const apiPromoteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}/promote`, { method: 'PUT', headers: getHeaders() });
-export const apiDeleteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}`, { method: 'DELETE', headers: getHeaders() });
-export const apiDeleteTeam = async (teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}`, { method: 'DELETE', headers: getHeaders() });
+export const apiCreateUser = async (email: string) => fetch(`${BASE_URL}/admin/users`, { method: 'POST', headers: getJsonHeaders(), body: JSON.stringify({ email }) });
+export const apiCreateTeam = async (name: string) => fetch(`${BASE_URL}/admin/teams`, { method: 'POST', headers: getJsonHeaders(), body: JSON.stringify({ name }) });
+export const apiAssignUser = async (userId: string, teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}/members`, { method: 'POST', headers: getJsonHeaders(), body: JSON.stringify({ targetUserId: userId }) });
+export const apiPromoteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}/promote`, { method: 'PUT', headers: getAuthHeader() });
 
-export const apiCreateSecret = async (key: string, value: string, permissions: any[]) => fetch(`${BASE_URL}/secrets`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ key, value, permissions }) });
+// FIXED: Removed body headers from DELETE
+export const apiDeleteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}`, { method: 'DELETE', headers: getAuthHeader() });
+export const apiDeleteTeam = async (teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}`, { method: 'DELETE', headers: getAuthHeader() }); 
+
+export const apiCreateSecret = async (key: string, value: string, permissions: any[]) => fetch(`${BASE_URL}/secrets`, { method: 'POST', headers: getJsonHeaders(), body: JSON.stringify({ key, value, permissions }) });
+
+
 
 function getHeaders() {
   const token = getSavedToken(); // your existing token fetcher

@@ -35,50 +35,70 @@ export async function secretRoutes(fastify: FastifyInstance) {
   // ==========================================
 
   // GET /secrets - List all K/V pairs you are authorized to see
+  // Replace the GET /secrets endpoint inside backend/src/routes.ts
   fastify.get('/secrets', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { userId, orgId } = request.user;
+    const { userId } = request.user;
 
-    const myTeams = db.select({ teamId: userTeams.teamId }).from(userTeams).where(eq(userTeams.userId, userId)).all();
-    const teamIds = myTeams.map((t) => t.teamId);
+    try {
+      // 1. Fetch the user's profile to find their real organization ID
+      const userRecord = db.select().from(users).where(eq(users.id, userId)).get();
+      if (!userRecord) return reply.status(404).send({ error: "User profile not found." });
+      const realOrgId = userRecord.organizationId;
 
-    const aclConditions = [
-      and(eq(acls.targetType, 'USER'), eq(acls.targetId, userId), eq(acls.canRead, true)),
-      and(eq(acls.targetType, 'ORG'), eq(acls.targetId, orgId), eq(acls.canRead, true)),
-    ];
+      // 2. Grab all secrets matching this organization space
+      const orgSecrets = db.select().from(secrets).where(eq(secrets.organizationId, realOrgId)).all();
 
-    if (teamIds.length > 0) {
-      aclConditions.push(and(eq(acls.targetType, 'TEAM'), inArray(acls.targetId, teamIds), eq(acls.canRead, true)));
+      // 3. Find all teams this specific user belongs to
+      const myTeams = db.select({ teamId: userTeams.teamId }).from(userTeams).where(eq(userTeams.userId, userId)).all();
+      const teamIds = new Set(myTeams.map(t => t.teamId));
+
+      // 4. Extract all active read authorization mappings
+      const allAcls = db.select().from(acls).where(eq(acls.canRead, true)).all();
+
+      // 5. JavaScript filtering (100% predictable, no ORM compilation quirks)
+      const visibleSecrets = orgSecrets.filter(secret => {
+        // Condition A: You are the absolute creator/owner of the secret
+        if (secret.ownerId === userId) return true;
+
+        // Condition B: The secret matches your User, Team, or Org visibility tags
+        const secretAcls = allAcls.filter(a => a.secretId === secret.id);
+        for (const acl of secretAcls) {
+          if (acl.targetType === 'USER' && acl.targetId === userId) return true;
+          if (acl.targetType === 'ORG' && acl.targetId === realOrgId) return true;
+          if (acl.targetType === 'TEAM' && teamIds.has(acl.targetId)) return true;
+        }
+
+        return false;
+      });
+
+      return { secrets: visibleSecrets };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: 'Failed to evaluate secure secret access mappings.' });
     }
-
-    const visibleSecrets = db.selectDistinct({ id: secrets.id, key: secrets.key, value: secrets.value })
-      .from(secrets)
-      .leftJoin(acls, eq(secrets.id, acls.secretId))
-      .where(or(eq(secrets.ownerId, userId), or(...aclConditions)))
-      .all();
-
-    return { secrets: visibleSecrets };
   });
 
-  // POST /secrets - Create secret with distinct READ/WRITE scopes
   fastify.post('/secrets', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { userId, orgId } = request.user;
-    
-    // The payload allows array of permissions, mixing users, teams, and orgs for both reads and writes
+    const { userId } = request.user;
     type Permission = { targetType: 'USER' | 'TEAM' | 'ORG', targetId: string, canRead: boolean, canWrite: boolean };
     const { key, value, permissions } = request.body as { key: string; value: string; permissions?: Permission[] };
 
     if (!key || !value) return reply.status(400).send({ error: 'Key and Value required.' });
 
     try {
+      const userRecord = db.select().from(users).where(eq(users.id, userId)).get();
+      const realOrgId = userRecord!.organizationId;
+
       const result = db.transaction((tx) => {
-        const newSecret = tx.insert(secrets).values({ key, value, ownerId: userId, organizationId: orgId }).returning().get();
+        const newSecret = tx.insert(secrets).values({ key, value, ownerId: userId, organizationId: realOrgId }).returning().get();
         if (!newSecret) throw new Error('Database failed to return the created secret.');
 
         if (permissions && permissions.length > 0) {
           const aclInserts = permissions.map(p => ({
             secretId: newSecret.id,
             targetType: p.targetType,
-            targetId: p.targetId,
+            // Automatically overwrite placeholder string with the user's active organization ID
+            targetId: p.targetType === 'ORG' ? realOrgId : p.targetId,
             canRead: p.canRead ?? false,
             canWrite: p.canWrite ?? false
           }));
@@ -88,6 +108,7 @@ export async function secretRoutes(fastify: FastifyInstance) {
       });
       return { success: true, secret: result };
     } catch (error) {
+      fastify.log.error(error);
       return reply.status(500).send({ error: 'Failed to write secret transaction securely.' });
     }
   });
@@ -142,28 +163,76 @@ export async function secretRoutes(fastify: FastifyInstance) {
   });
 
   // DELETE /admin/users/:userId - Admin delete users
-  fastify.delete('/admin/users/:targetUserId', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
-    const { targetUserId } = request.params as { targetUserId: string };
+//   fastify.delete('/admin/users/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
+//     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
+//     const { userId } = request.params as { userId: string };
     
-    // SQLite transaction to cascade delete (removes them from teams and removes their owned secrets)
-    db.transaction((tx) => {
-      tx.delete(userTeams).where(eq(userTeams.userId, targetUserId)).run();
-      tx.delete(secrets).where(eq(secrets.ownerId, targetUserId)).run();
-      tx.delete(users).where(eq(users.id, targetUserId)).run();
-    });
-    return { success: true };
+//     // SQLite transaction to cascade delete (removes them from teams and removes their owned secrets)
+//     db.transaction((tx) => {
+//       tx.delete(userTeams).where(eq(userTeams.userId, userId)).run();
+//       tx.delete(secrets).where(eq(secrets.ownerId, userId)).run();
+//       tx.delete(users).where(eq(users.id, userId)).run();
+//     });
+//     return { success: true };
+//   });
+
+//   // DELETE /admin/teams/:teamId - Admin delete teams
+//   fastify.delete('/admin/teams/:teamId', async (request: FastifyRequest, reply: FastifyReply) => {
+//     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
+//     const { teamId } = request.params as { teamId: string };
+    
+//     db.transaction((tx) => {
+//       tx.delete(userTeams).where(eq(userTeams.teamId, teamId)).run();
+//       tx.delete(teams).where(eq(teams.id, teamId)).run();
+//     });
+//     return { success: true };
+//   });
+
+// FIXED: DELETE /admin/users/:userId
+  fastify.delete('/admin/users/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
+    const { userId } = request.params as { userId: string };
+
+    try {
+      // Execute sequentially without a complex transaction to isolate failures
+      db.delete(userTeams).where(eq(userTeams.userId, userId)).run();
+      db.delete(acls).where(and(eq(acls.targetType, 'USER'), eq(acls.targetId, userId))).run();
+      db.delete(secrets).where(eq(secrets.ownerId, userId)).run();
+      
+      const result = db.delete(users).where(eq(users.id, userId)).returning().get();
+      
+      if (!result) {
+        return reply.status(444).send({ error: 'User not found in database' });
+      }
+
+      return { success: true, deletedUser: result };
+    } catch (error) {
+      fastify.log.error(error); // This will spit out the real SQLite error in your backend logs
+      return reply.status(500).send({ error: 'Failed to delete user due to database constraints.' });
+    }
   });
 
-  // DELETE /admin/teams/:teamId - Admin delete teams
+  // FIXED: DELETE /admin/teams/:teamId
   fastify.delete('/admin/teams/:teamId', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { teamId } = request.params as { teamId: string };
-    
-    db.transaction((tx) => {
-      tx.delete(userTeams).where(eq(userTeams.teamId, teamId)).run();
-      tx.delete(teams).where(eq(teams.id, teamId)).run();
-    });
-    return { success: true };
+
+    try {
+      db.delete(userTeams).where(eq(userTeams.teamId, teamId)).run();
+      db.delete(acls).where(and(eq(acls.targetType, 'TEAM'), eq(acls.targetId, teamId))).run();
+      
+      const result = db.delete(teams).where(eq(teams.id, teamId)).returning().get();
+
+      if (!result) {
+        return reply.status(404).send({ error: 'Team not found in database' });
+      }
+
+      return { success: true, deletedTeam: result };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: 'Failed to delete team due to database constraints.' });
+    }
   });
 }
+
+

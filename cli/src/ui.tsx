@@ -76,7 +76,16 @@ export default function App() {
     setLoading(false);
   };
 
-  const goMenu = () => setCurrentView('MENU');
+  const goMenu = async () => {
+    try {
+      const data = await fetchDirectory();
+      setDirectory(data); // 👈 Pull fresh users/teams from DB
+    } catch (err) {
+      console.error("Failed to refresh directory data");
+    }
+    setCurrentView('MENU');
+  };
+
 
   if (loading) return <Text color="yellow">Loading... Please wait.</Text>;
 
@@ -238,20 +247,61 @@ function CreateTeamView({ onBack }: { onBack: () => void }) {
 }
 
 // Reusable list selector for Deleting / Promoting
+// function SelectActionView({ title, items, action, onBack }: { title: string, items: any[], action: (id: string) => Promise<any>, onBack: () => void }) {
+//   const [done, setDone] = useState(false);
+//   return (
+//     <>
+//       <Text bold color="red">{title}</Text>
+//       {!done ? (
+//         <SelectInput items={[...items, {label: '⬅️ Cancel', value: 'cancel'}]} onSelect={async (item) => {
+//           if (item.value === 'cancel') return onBack();
+//           await action(item.value as string);
+//           setDone(true);
+//         }} />
+//       ) : (
+//         <Box flexDirection="column">
+//           <Text color="green">✅ Action completed successfully!</Text>
+//           <SelectInput items={[{ label: '⬅️  Back to Menu', value: 'back' }]} onSelect={onBack} />
+//         </Box>
+//       )}
+//     </>
+//   );
+// }
+
+
 function SelectActionView({ title, items, action, onBack }: { title: string, items: any[], action: (id: string) => Promise<any>, onBack: () => void }) {
-  const [done, setDone] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+
   return (
     <>
       <Text bold color="red">{title}</Text>
-      {!done ? (
+      {status === 'idle' && (
         <SelectInput items={[...items, {label: '⬅️ Cancel', value: 'cancel'}]} onSelect={async (item) => {
           if (item.value === 'cancel') return onBack();
-          await action(item.value as string);
-          setDone(true);
+          
+          const res = await action(item.value as string);
+          // 👈 Check if the response failed behind the scenes!
+          if (res.ok) {
+            setStatus('success');
+          } else {
+            const errData = await res.json().catch(() => ({ error: 'Unknown server error' }));
+            setErrorMessage(errData.error || 'Server rejected the request');
+            setStatus('error');
+          }
         }} />
-      ) : (
+      )}
+
+      {status === 'success' && (
         <Box flexDirection="column">
           <Text color="green">✅ Action completed successfully!</Text>
+          <SelectInput items={[{ label: '⬅️  Back to Menu', value: 'back' }]} onSelect={onBack} />
+        </Box>
+      )}
+
+      {status === 'error' && (
+        <Box flexDirection="column">
+          <Text color="red">❌ Operation Failed: {errorMessage}</Text>
           <SelectInput items={[{ label: '⬅️  Back to Menu', value: 'back' }]} onSelect={onBack} />
         </Box>
       )}
@@ -296,38 +346,84 @@ function CreateSecretView({ directory, onBack }: { directory: any, onBack: () =>
   const [step, setStep] = useState(1);
   const [key, setKey] = useState('');
   const [val, setVal] = useState('');
-  const [target, setTarget] = useState<any>(null); // Who are we sharing with?
+  const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
-  if (step === 1) return <Box><Text>Enter Secret Key: </Text><TextInput value={key} onChange={setKey} onSubmit={()=>setStep(2)}/></Box>;
-  if (step === 2) return <Box><Text>Enter Secret Value: </Text><TextInput value={val} onChange={setVal} onSubmit={()=>setStep(3)}/></Box>;
-  if (step === 3) {
-    const targets = [
-      { label: 'Just Me (Private)', value: { type: 'NONE', id: '' } },
-      { label: 'Entire Organization', value: { type: 'ORG', id: 'org' } }, // Simplified ORG target
-      ...directory.teams.map((t:any)=>({label: `Team: ${t.name}`, value: { type: 'TEAM', id: t.id }})),
-      ...directory.users.map((u:any)=>({label: `User: ${u.email}`, value: { type: 'USER', id: u.id }}))
-    ];
+  // Handle submission cleanly outside of the layout rendering paths
+  const handleSubmitSecret = async (targetSelection: any) => {
+    setStatus('saving');
+    try {
+      const permissions = targetSelection.type !== 'NONE' 
+        ? [{ targetType: targetSelection.type, targetId: targetSelection.id, canRead: true, canWrite: true }] 
+        : [];
+
+      await apiCreateSecret(key, val, permissions);
+      setStatus('success');
+      setStep(5);
+    } catch (err) {
+      setStatus('error');
+    }
+  };
+
+  if (step === 1) {
     return (
-      <>
-        <Text bold>Who should have READ/WRITE access to this?</Text>
-        <SelectInput items={targets} onSelect={(item) => {
-          setTarget(item.value);
-          setStep(4);
-        }}/>
-      </>
+      <Box>
+        <Text>Enter Secret Key: </Text>
+        <TextInput value={key} onChange={setKey} onSubmit={() => setStep(2)} />
+      </Box>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <Box>
+        <Text>Enter Secret Value: </Text>
+        <TextInput value={val} onChange={setVal} onSubmit={() => setStep(3)} />
+      </Box>
     );
   }
   
-  if (step === 4) {
-    // Auto-submit the API call
-    apiCreateSecret(key, val, target.type !== 'NONE' ? [{ targetType: target.type, targetId: target.id, canRead: true, canWrite: true }] : []).then(() => setStep(5));
-    return <Text>Saving...</Text>;
+  if (step === 3) {
+    // Generate unique, clean keys by pairing labels with indexes implicitly in SelectInput
+    const targets = [
+      { label: 'Just Me (Private)', value: 'NONE_id' },
+      { label: 'Entire Organization', value: 'ORG_org' },
+      ...directory.teams.map((t: any) => ({ label: `Team: ${t.name}`, value: `TEAM_${t.id}` })),
+      ...directory.users.map((u: any) => ({ label: `User: ${u.email}`, value: `USER_${u.id}` }))
+    ];
+    
+    return (
+      <>
+        <Text bold color="cyan">Who should have READ/WRITE access to this?</Text>
+        <SelectInput 
+          items={targets} 
+          onSelect={(item: any) => {
+            const [type, id] = String(item.value).split('_');
+            handleSubmitSecret({ type, id });
+          }}
+        />
+      </>
+    );
+  }
+
+  if (status === 'saving') {
+    return <Text color="yellow">⏳ Saving secret to secure vault...</Text>;
+  }
+
+  if (status === 'error') {
+    return (
+      <Box flexDirection="column">
+        <Text color="red">❌ Failed to create secret. Check backend server connectivity.</Text>
+        <SelectInput items={[{ label: '⬅️  Back to Menu', value: 'back' }]} onSelect={onBack} />
+      </Box>
+    );
   }
 
   return (
     <Box flexDirection="column">
-      <Text color="green">✅ Secret created and secured!</Text>
-      <SelectInput items={[{ label: '⬅️  Back to Menu', value: 'back' }]} onSelect={onBack} />
+      <Text color="green">✅ Secret created and permissions provisioned successfully!</Text>
+      <Box marginTop={1}>
+        <SelectInput items={[{ label: '⬅️  Back to Menu', value: 'back' }]} onSelect={onBack} />
+      </Box>
     </Box>
   );
 }
