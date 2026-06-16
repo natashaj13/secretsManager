@@ -1,8 +1,4 @@
 import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
-import { sql } from 'drizzle-orm';
-
-// Helper to generate UUIDs
-const generateId = () => sql`(lower(hex(randomblob(16))))`;
 
 export const organizations = sqliteTable('organizations', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -23,6 +19,7 @@ export const teams = sqliteTable('teams', {
   organizationId: text('organization_id').notNull().references(() => organizations.id),
 });
 
+//maps users to teams for n:n relationship
 export const userTeams = sqliteTable('user_teams', {
   userId: text('user_id').notNull().references(() => users.id),
   teamId: text('team_id').notNull().references(() => teams.id),
@@ -38,10 +35,11 @@ export const secrets = sqliteTable('secrets', {
   organizationId: text('organization_id').notNull().references(() => organizations.id),
 });
 
+//secrets table (who has access to what)
 export const acls = sqliteTable('acls', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   secretId: text('secret_id').notNull().references(() => secrets.id),
-  targetType: text('target_type').notNull(), // "USER", "TEAM", or "ORG"
+  targetType: text('target_type').notNull(), 
   targetId: text('target_id').notNull(),
   canRead: integer('can_read', { mode: 'boolean' }).default(true),
   canWrite: integer('can_write', { mode: 'boolean' }).default(false),

@@ -6,12 +6,12 @@ import { eq } from 'drizzle-orm';
 
 import { db } from './db';
 import { users, organizations } from './db/schema';
-import { secretRoutes } from './routes'; // Import your clean external routes file
+import { secretRoutes } from './routes'; 
 
 const fastify = Fastify({ logger: true });
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key';
 
-// --- TYPE MERGING ---
+//initlaize fastify and set up oath2 for github
 declare module 'fastify' {
   interface FastifyInstance {
     githubOAuth2: OAuth2Namespace;
@@ -21,7 +21,6 @@ declare module 'fastify' {
   }
 }
 
-// --- OAUTH2 PLUGIN REGISTRATION ---
 fastify.register(fastifyOauth2, {
   name: 'githubOAuth2',
   credentials: {
@@ -35,20 +34,18 @@ fastify.register(fastifyOauth2, {
   callbackUri: 'http://localhost:4000/login/github/callback'
 });
 
-// --- REGISTER EXTERNAL ROUTES ---
-// This safely mounts the GET /secrets and POST /secrets routes from your routes.ts file
 fastify.register(secretRoutes);
 
-// --- ROUTES ---
 
-// The GitHub OAuth Callback
-// The GitHub OAuth Callback
+// ROUTES
+
+// login with Github
 fastify.get('/login/github/callback', async (request: FastifyRequest, reply: FastifyReply) => {
   try {
-    // 1. Exchange the temporary code from GitHub for an official access token
+    // Get access token
     const tokenResult = await fastify.githubOAuth2.getAccessTokenFromAuthorizationCodeFlow(request);
     
-    // 2. Fetch the user's GitHub profile data using the access token
+    // Fetch github profile
     const userResponse = await fetch('https://api.github.com/user', {
       headers: { Authorization: `Bearer ${tokenResult.token.access_token}` }
     });
@@ -60,17 +57,17 @@ fastify.get('/login/github/callback', async (request: FastifyRequest, reply: Fas
     const githubProfile = await userResponse.json() as any;
     const githubIdStr = String(githubProfile.id);
 
-    // 3. Look up or create the user in your SQLite Database
+    // Look up or create the user in db
     let user = await db.select().from(users).where(eq(users.githubId, githubIdStr)).get();
     
     if (!user) {
-      // Auto-create a default org if none exist
+      // Create default org if none exist
       let org = await db.select().from(organizations).get();
       if (!org) {
         [org] = await db.insert(organizations).values({ name: 'Default Organization' }).returning();
       }
       
-      // Provision the new user profile
+      // Set up the new user profile
       [user] = await db.insert(users).values({
         email: githubProfile.email || `${githubProfile.login}@github.com`,
         githubId: githubIdStr,
@@ -79,11 +76,10 @@ fastify.get('/login/github/callback', async (request: FastifyRequest, reply: Fas
       }).returning();
     }
 
-    // 4. Generate your internal secure JWT application token
+    // Generate JWT application token
     const appToken = jwt.sign({ userId: user.id, orgId: user.organizationId }, JWT_SECRET, { expiresIn: '7d' });
 
-    // 5. Redirect the browser back to your local CLI's listening server on port 5123
-    // We hardcode 5123 here because that is the fixed port your CLI auth-server listens on!
+    // Redirect browser back to CLI's server on port 5123
     reply.redirect(`http://localhost:5123/callback?token=${appToken}`);
 
   } catch (error) {
@@ -92,7 +88,7 @@ fastify.get('/login/github/callback', async (request: FastifyRequest, reply: Fas
   }
 });
 
-// --- START SERVER ---
+// start server on port 4000
 const start = async () => {
   try {
     await fastify.listen({ port: 4000 });

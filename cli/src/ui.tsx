@@ -5,7 +5,6 @@ import TextInput from 'ink-text-input';
 import fs from 'fs';
 import path from 'path';
 
-// API imports (Ensure your api.ts exports these matching functions)
 import { startAuthFlow } from './auth-server.js';
 import { 
   fetchSecrets, fetchDirectory, logout, 
@@ -15,9 +14,8 @@ import {
 
 const CONFIG_PATH = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.secret-manager-token.json');
 
-// ==========================================
-// MAIN APP COMPONENT
-// ==========================================
+
+
 export default function App() {
   const { exit } = useApp();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -35,6 +33,7 @@ export default function App() {
     }
   }, []);
 
+  //check if user is admin
   const checkAdminStatus = async () => {
     setLoading(true);
     try {
@@ -66,6 +65,7 @@ export default function App() {
     setCurrentView('LOGIN');
   };
 
+  //get authorized secrets
   const loadSecrets = async () => {
     setLoading(true);
     try {
@@ -76,6 +76,7 @@ export default function App() {
     setLoading(false);
   };
 
+  //used for modifying secrets permisions
   const loadSecretsForPermissions = async () => {
     setLoading(true);
     try {
@@ -86,6 +87,7 @@ export default function App() {
     setLoading(false);
   };
 
+  //main menu
   const goMenu = async () => {
     try {
       const data = await fetchDirectory();
@@ -96,6 +98,8 @@ export default function App() {
     setCurrentView('MENU');
   };
 
+
+  // VIEWS
 
   if (loading) return <Text color="yellow">Loading... Please wait.</Text>;
 
@@ -178,6 +182,8 @@ export default function App() {
 // SUB-VIEW COMPONENTS
 // ==========================================
 
+
+//show list of secrets user has access to
 function ListSecretsView({ secrets, onBack }: { secrets: any[], onBack: () => void }) {
   return (
     <>
@@ -192,6 +198,7 @@ function ListSecretsView({ secrets, onBack }: { secrets: any[], onBack: () => vo
   );
 }
 
+//main menu
 function DirectoryView({ directory, onBack }: { directory: any, onBack: () => void }) {
   return (
     <>
@@ -209,7 +216,8 @@ function DirectoryView({ directory, onBack }: { directory: any, onBack: () => vo
   );
 }
 
-// Reusable text input form for simple creations
+
+//create new user
 function CreateUserView({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [done, setDone] = useState(false);
@@ -235,6 +243,8 @@ function CreateUserView({ onBack }: { onBack: () => void }) {
   );
 }
 
+
+//create new team
 function CreateTeamView({ onBack }: { onBack: () => void }) {
   const [name, setName] = useState('');
   const [done, setDone] = useState(false);
@@ -260,7 +270,7 @@ function CreateTeamView({ onBack }: { onBack: () => void }) {
   );
 }
 
-
+//generic view for actions needing a selection from options
 function SelectActionView({ title, items, action, onBack }: { title: string, items: any[], action: (id: string) => Promise<any>, onBack: () => void }) {
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
@@ -273,7 +283,6 @@ function SelectActionView({ title, items, action, onBack }: { title: string, ite
           if (item.value === 'cancel') return onBack();
           
           const res = await action(item.value as string);
-          // 👈 Check if the response failed behind the scenes!
           if (res.ok) {
             setStatus('success');
           } else {
@@ -301,6 +310,8 @@ function SelectActionView({ title, items, action, onBack }: { title: string, ite
   );
 }
 
+
+//assign user to team
 function AssignUserView({ directory, onBack }: { directory: any, onBack: () => void }) {
   const [step, setStep] = useState(1);
   const [userId, setUserId] = useState('');
@@ -335,13 +346,14 @@ function AssignUserView({ directory, onBack }: { directory: any, onBack: () => v
   );
 }
 
+
+//create new secret and set permissions
 function CreateSecretView({ directory, onBack }: { directory: any, onBack: () => void }) {
   const [step, setStep] = useState(1);
   const [key, setKey] = useState('');
   const [val, setVal] = useState('');
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
-  // Handle submission cleanly outside of the layout rendering paths
   const handleSubmitSecret = async (targetSelection: any) => {
     setStatus('saving');
     try {
@@ -376,7 +388,6 @@ function CreateSecretView({ directory, onBack }: { directory: any, onBack: () =>
   }
   
   if (step === 3) {
-    // Generate unique, clean keys by pairing labels with indexes implicitly in SelectInput
     const targets = [
       { label: 'Just Me (Private)', value: 'NONE_id' },
       { label: 'Entire Organization', value: 'ORG_org' },
@@ -422,6 +433,8 @@ function CreateSecretView({ directory, onBack }: { directory: any, onBack: () =>
 
 }
 
+
+//update secret permissions
 function ManagePermissionsView({ secrets, directory, onBack }: { secrets: any[], directory: any, onBack: () => void }) {
   const [step, setStep] = useState(1);
   const [selectedSecretId, setSelectedSecretId] = useState('');
@@ -450,7 +463,6 @@ function ManagePermissionsView({ secrets, directory, onBack }: { secrets: any[],
     );
   }
 
-  // STEP 1: Select Secret
   if (step === 1) {
     return (
       <>
@@ -467,17 +479,16 @@ function ManagePermissionsView({ secrets, directory, onBack }: { secrets: any[],
     );
   }
 
-  // STEP 2: Select Recipient/Scope Target
   if (step === 2) {
     const options = [
       { label: 'Entire Organization', value: 'ORG_org' },
-      ...directory.teams.map((t: any) => ({ label: `👥 Team: ${t.name}`, value: `TEAM_${t.id}` })),
-      ...directory.users.map((u: any) => ({ label: `👤 User: ${u.email}`, value: `USER_${u.id}` }))
+      ...directory.teams.map((t: any) => ({ label: `Team: ${t.name}`, value: `TEAM_${t.id}` })),
+      ...directory.users.map((u: any) => ({ label: `User: ${u.email}`, value: `USER_${u.id}` }))
     ];
 
     return (
       <>
-        <Text bold color="cyan">Step 2: Select Entity Target Scope</Text>
+        <Text bold color="cyan">Step 2: Select Target Scope</Text>
         <SelectInput 
           items={[...options, { label: '⬅ Back', value: 'back' }]} 
           onSelect={(item) => {
@@ -491,7 +502,6 @@ function ManagePermissionsView({ secrets, directory, onBack }: { secrets: any[],
     );
   }
 
-  // STEP 3: Select Action Type (Grant vs Revoke option step)
   if (step === 3 && status === 'idle') {
     return (
       <>

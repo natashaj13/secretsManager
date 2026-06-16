@@ -6,7 +6,7 @@ import { secrets, acls, userTeams, users, teams } from './db/schema.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key';
 
-// --- MIDDLEWARE: AUTHENTICATION ---
+// AUTHENTICATION MIDDLEWARE
 const authenticate = async (request: FastifyRequest, reply: FastifyReply) => {
   try {
     const authHeader = request.headers.authorization;
@@ -24,43 +24,38 @@ const authenticate = async (request: FastifyRequest, reply: FastifyReply) => {
 export async function secretRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
-  // --- HELPER: ADMIN VERIFICATION ---
+  // check user is admin
   const verifyAdmin = (userId: string) => {
     const user = db.select().from(users).where(eq(users.id, userId)).get();
     return user?.isAdmin === true;
   };
 
+ 
   // ==========================================
-  // SECTION 1: SECRETS & SCOPES
+  // ROUTES 
   // ==========================================
 
-  // GET /secrets - List all K/V pairs you are authorized to see
-  // Replace the GET /secrets endpoint inside backend/src/routes.ts
+  // GET /secrets - list all secrets you are allowed to see
   fastify.get('/secrets', async (request: FastifyRequest, reply: FastifyReply) => {
     const { userId } = request.user;
 
     try {
-      // 1. Fetch the user's profile to find their real organization ID
+      //get user's id, teams, and orgs to filter secrets they can see
       const userRecord = db.select().from(users).where(eq(users.id, userId)).get();
       if (!userRecord) return reply.status(404).send({ error: "User profile not found." });
       const realOrgId = userRecord.organizationId;
 
-      // 2. Grab all secrets matching this organization space
       const orgSecrets = db.select().from(secrets).where(eq(secrets.organizationId, realOrgId)).all();
 
-      // 3. Find all teams this specific user belongs to
       const myTeams = db.select({ teamId: userTeams.teamId }).from(userTeams).where(eq(userTeams.userId, userId)).all();
       const teamIds = new Set(myTeams.map(t => t.teamId));
 
-      // 4. Extract all active read authorization mappings
       const allAcls = db.select().from(acls).where(eq(acls.canRead, true)).all();
 
-      // 5. JavaScript filtering (100% predictable, no ORM compilation quirks)
       const visibleSecrets = orgSecrets.filter(secret => {
-        // Condition A: You are the absolute creator/owner of the secret
+        //if you created secret or are allowed to see it
         if (secret.ownerId === userId) return true;
 
-        // Condition B: The secret matches your User, Team, or Org visibility tags
         const secretAcls = allAcls.filter(a => a.secretId === secret.id);
         for (const acl of secretAcls) {
           if (acl.targetType === 'USER' && acl.targetId === userId) return true;
@@ -78,6 +73,7 @@ export async function secretRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // POST /secrets - create a new secret with permissions
   fastify.post('/secrets', async (request: FastifyRequest, reply: FastifyReply) => {
     const { userId } = request.user;
     type Permission = { targetType: 'USER' | 'TEAM' | 'ORG', targetId: string, canRead: boolean, canWrite: boolean };
@@ -97,7 +93,6 @@ export async function secretRoutes(fastify: FastifyInstance) {
           const aclInserts = permissions.map(p => ({
             secretId: newSecret.id,
             targetType: p.targetType,
-            // Automatically overwrite placeholder string with the user's active organization ID
             targetId: p.targetType === 'ORG' ? realOrgId : p.targetId,
             canRead: p.canRead ?? false,
             canWrite: p.canWrite ?? false
@@ -113,11 +108,8 @@ export async function secretRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // ==========================================
-  // SECTION 2: DIRECTORY
-  // ==========================================
 
-  // GET /directory - User can list all teams and users in org
+  // GET /directory - show all teams and users in org
   fastify.get('/directory', async (request: FastifyRequest, reply: FastifyReply) => {
     const { orgId } = request.user;
     const orgUsers = db.select({ id: users.id, email: users.email, isAdmin: users.isAdmin }).from(users).where(eq(users.organizationId, orgId)).all();
@@ -125,11 +117,8 @@ export async function secretRoutes(fastify: FastifyInstance) {
     return { users: orgUsers, teams: orgTeams };
   });
 
-  // ==========================================
-  // SECTION 3: ADMIN CONTROLS
-  // ==========================================
 
-  // POST /admin/users - Admin create user manually
+  // POST /admin/users - create user if admin
   fastify.post('/admin/users', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { email, isAdmin } = request.body as { email: string, isAdmin: boolean };
@@ -137,7 +126,7 @@ export async function secretRoutes(fastify: FastifyInstance) {
     return { success: true, user: newUser };
   });
 
-  // POST /admin/teams - Admin create teams
+  // POST /admin/teams - create team if admin
   fastify.post('/admin/teams', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { name } = request.body as { name: string };
@@ -145,7 +134,7 @@ export async function secretRoutes(fastify: FastifyInstance) {
     return { success: true, team: newTeam };
   });
 
-  // PUT /admin/users/:userId/promote - Admin promote other users to admin
+  // PUT /admin/users/:userId/promote - admin promote other users to admin
   fastify.put('/admin/users/:targetUserId/promote', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { targetUserId } = request.params as { targetUserId: string };
@@ -153,7 +142,7 @@ export async function secretRoutes(fastify: FastifyInstance) {
     return { success: true };
   });
 
-  // POST /admin/teams/:teamId/members - Admin assign/reassign users to teams
+  // POST /admin/teams/:teamId/members - admin assign users to teams
   fastify.post('/admin/teams/:teamId/members', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { teamId } = request.params as { teamId: string };
@@ -162,7 +151,7 @@ export async function secretRoutes(fastify: FastifyInstance) {
     return { success: true };
   });
 
-  // POST /secrets/:secretId/permissions - Add access rules to an existing secret
+  // POST /secrets/:secretId/permissions - modify secret access rules
   fastify.post('/secrets/:secretId/permissions', async (request: FastifyRequest, reply: FastifyReply) => {
     const { userId } = request.user;
     const { secretId } = request.params as { secretId: string };
@@ -177,11 +166,10 @@ export async function secretRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      // 1. Verify secret existence
+      //if secret exists and you have access
       const secret = db.select().from(secrets).where(eq(secrets.id, secretId)).get();
       if (!secret) return reply.status(404).send({ error: 'Secret target not found.' });
 
-      // 2. Validate authority bounds
       const userRecord = db.select().from(users).where(eq(users.id, userId)).get();
       const isAdmin = userRecord?.isAdmin;
 
@@ -192,9 +180,9 @@ export async function secretRoutes(fastify: FastifyInstance) {
       const realOrgId = userRecord!.organizationId;
       const finalTargetId = targetType === 'ORG' ? realOrgId : targetId;
 
-      // 3. Perform Transactional Mutation
+      //modify permissions
       db.transaction((tx) => {
-        // Always clear any matching older record first to avoid duplication conflicts
+        //clear old record
         tx.delete(acls).where(
           and(
             eq(acls.secretId, secretId),
@@ -203,7 +191,6 @@ export async function secretRoutes(fastify: FastifyInstance) {
           )
         ).run();
 
-        // If the action is GRANT, write the active permission line
         if (action === 'GRANT') {
           tx.insert(acls).values({
             secretId,
@@ -222,7 +209,8 @@ export async function secretRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // FIXED: DELETE /admin/teams/:teamId
+
+  //DELETE /admin/teams/:teamId - admin delete team
   fastify.delete('/admin/teams/:teamId', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { teamId } = request.params as { teamId: string };
@@ -244,12 +232,13 @@ export async function secretRoutes(fastify: FastifyInstance) {
     }
   });
 
+
+  //DELETE /admin/users/:userId - admin delete user
   fastify.delete('/admin/users/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
     const { userId } = request.params as { userId: string };
 
     try {
-      // Execute sequentially without a complex transaction to isolate failures
       db.delete(userTeams).where(eq(userTeams.userId, userId)).run();
       db.delete(acls).where(and(eq(acls.targetType, 'USER'), eq(acls.targetId, userId))).run();
       db.delete(secrets).where(eq(secrets.ownerId, userId)).run();
@@ -262,11 +251,10 @@ export async function secretRoutes(fastify: FastifyInstance) {
 
       return { success: true, deletedUser: result };
     } catch (error) {
-      fastify.log.error(error); // This will spit out the real SQLite error in your backend logs
+      fastify.log.error(error); 
       return reply.status(500).send({ error: 'Failed to delete user due to database constraints.' });
     }
   });
-
 }
 
 

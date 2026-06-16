@@ -4,13 +4,13 @@ import path from 'path';
 const CONFIG_PATH = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.secret-manager-token.json');
 const BASE_URL = 'http://localhost:4000';
 
-// For GET and DELETE requests (No Content-Type header to avoid Fastify 400 errors)
+// For GET and DELETE requests (for no body requests)
 function getAuthHeader() {
   const token = getSavedToken();
   return { 'Authorization': `Bearer ${token}` };
 }
 
-// For POST and PUT requests (Includes Content-Type for JSON payloads)
+// For POST and PUT requests (for requests with JSON body)
 function getJsonHeaders() {
   const token = getSavedToken();
   return { 
@@ -19,7 +19,6 @@ function getJsonHeaders() {
   };
 }
 
-// Internal helper to read the saved token
 function getSavedToken(): string | null {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -32,11 +31,11 @@ function getSavedToken(): string | null {
   return null;
 }
 
-// 1. Fetch authorized secrets from the backend
+//Fetch authorized secrets from backend
 export const fetchSecrets = async () => {
   const res = await fetch(`${BASE_URL}/secrets`, { 
     method: 'GET', 
-    headers: getAuthHeader() // 👈 Uses the body-less auth header helper
+    headers: getAuthHeader()
   });
 
   if (!res.ok) {
@@ -47,7 +46,7 @@ export const fetchSecrets = async () => {
   return res.json();
 };
 
-// 2. Create a new secret pair
+// Create new secret pair
 export async function createSecret(key: string, value: string) {
   const token = getSavedToken();
   if (!token) throw new Error('Not authenticated');
@@ -65,15 +64,16 @@ export async function createSecret(key: string, value: string) {
   return await response.json();
 }
 
-
+// Add permissions for a secret
 export const apiAddSecretPermission = async (secretId: string, targetType: string, targetId: string) => {
   return fetch(`${BASE_URL}/secrets/${secretId}/permissions`, {
     method: 'POST',
-    headers: getJsonHeaders(), // Uses JSON headers because it sends a data payload
+    headers: getJsonHeaders(), 
     body: JSON.stringify({ targetType, targetId, canRead: true, canWrite: true })
   });
 };
 
+//logout
 export function logout() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -85,14 +85,17 @@ export function logout() {
   }
 }
 
+//list users and teams for org
 export async function fetchDirectory() {
   const token = getSavedToken();
   const response = await fetch(`${BASE_URL}/directory`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
-  return await response.json(); // Returns { users: [], teams: [] }
+  return await response.json(); 
 }
 
+
+//make user an admin
 export async function promoteUser(targetUserId: string) {
   const token = getSavedToken();
   await fetch(`${BASE_URL}/admin/users/promote`, {
@@ -111,7 +114,6 @@ export const apiCreateTeam = async (name: string) => fetch(`${BASE_URL}/admin/te
 export const apiAssignUser = async (userId: string, teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}/members`, { method: 'POST', headers: getJsonHeaders(), body: JSON.stringify({ targetUserId: userId }) });
 export const apiPromoteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}/promote`, { method: 'PUT', headers: getAuthHeader() });
 
-// FIXED: Removed body headers from DELETE
 export const apiDeleteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}`, { method: 'DELETE', headers: getAuthHeader() });
 export const apiDeleteTeam = async (teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}`, { method: 'DELETE', headers: getAuthHeader() }); 
 
@@ -126,6 +128,6 @@ export const apiManageSecretPermission = async (secretId: string, targetType: st
 };
 
 function getHeaders() {
-  const token = getSavedToken(); // your existing token fetcher
+  const token = getSavedToken(); 
   return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
