@@ -162,53 +162,63 @@ export async function secretRoutes(fastify: FastifyInstance) {
     return { success: true };
   });
 
-  // DELETE /admin/users/:userId - Admin delete users
-//   fastify.delete('/admin/users/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
-//     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
-//     const { userId } = request.params as { userId: string };
-    
-//     // SQLite transaction to cascade delete (removes them from teams and removes their owned secrets)
-//     db.transaction((tx) => {
-//       tx.delete(userTeams).where(eq(userTeams.userId, userId)).run();
-//       tx.delete(secrets).where(eq(secrets.ownerId, userId)).run();
-//       tx.delete(users).where(eq(users.id, userId)).run();
-//     });
-//     return { success: true };
-//   });
+  // POST /secrets/:secretId/permissions - Add access rules to an existing secret
+  fastify.post('/secrets/:secretId/permissions', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { userId } = request.user;
+    const { secretId } = request.params as { secretId: string };
+    const { targetType, targetId, action } = request.body as { 
+      targetType: 'USER' | 'TEAM' | 'ORG'; 
+      targetId: string; 
+      action: 'GRANT' | 'REVOKE'; 
+    };
 
-//   // DELETE /admin/teams/:teamId - Admin delete teams
-//   fastify.delete('/admin/teams/:teamId', async (request: FastifyRequest, reply: FastifyReply) => {
-//     if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
-//     const { teamId } = request.params as { teamId: string };
-    
-//     db.transaction((tx) => {
-//       tx.delete(userTeams).where(eq(userTeams.teamId, teamId)).run();
-//       tx.delete(teams).where(eq(teams.id, teamId)).run();
-//     });
-//     return { success: true };
-//   });
-
-// FIXED: DELETE /admin/users/:userId
-  fastify.delete('/admin/users/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
-    const { userId } = request.params as { userId: string };
+    if (!targetType || !targetId || !action) {
+      return reply.status(400).send({ error: 'Target type, target ID, and explicit action (GRANT/REVOKE) are required.' });
+    }
 
     try {
-      // Execute sequentially without a complex transaction to isolate failures
-      db.delete(userTeams).where(eq(userTeams.userId, userId)).run();
-      db.delete(acls).where(and(eq(acls.targetType, 'USER'), eq(acls.targetId, userId))).run();
-      db.delete(secrets).where(eq(secrets.ownerId, userId)).run();
-      
-      const result = db.delete(users).where(eq(users.id, userId)).returning().get();
-      
-      if (!result) {
-        return reply.status(444).send({ error: 'User not found in database' });
+      // 1. Verify secret existence
+      const secret = db.select().from(secrets).where(eq(secrets.id, secretId)).get();
+      if (!secret) return reply.status(404).send({ error: 'Secret target not found.' });
+
+      // 2. Validate authority bounds
+      const userRecord = db.select().from(users).where(eq(users.id, userId)).get();
+      const isAdmin = userRecord?.isAdmin;
+
+      if (secret.ownerId !== userId && !isAdmin) {
+        return reply.status(403).send({ error: 'Access Denied: You do not own this secret.' });
       }
 
-      return { success: true, deletedUser: result };
+      const realOrgId = userRecord!.organizationId;
+      const finalTargetId = targetType === 'ORG' ? realOrgId : targetId;
+
+      // 3. Perform Transactional Mutation
+      db.transaction((tx) => {
+        // Always clear any matching older record first to avoid duplication conflicts
+        tx.delete(acls).where(
+          and(
+            eq(acls.secretId, secretId),
+            eq(acls.targetType, targetType),
+            eq(acls.targetId, finalTargetId)
+          )
+        ).run();
+
+        // If the action is GRANT, write the active permission line
+        if (action === 'GRANT') {
+          tx.insert(acls).values({
+            secretId,
+            targetType,
+            targetId: finalTargetId,
+            canRead: true,
+            canWrite: true
+          }).run();
+        }
+      });
+
+      return { success: true };
     } catch (error) {
-      fastify.log.error(error); // This will spit out the real SQLite error in your backend logs
-      return reply.status(500).send({ error: 'Failed to delete user due to database constraints.' });
+      fastify.log.error(error);
+      return reply.status(500).send({ error: 'Failed to process security policy modifications.' });
     }
   });
 
@@ -233,6 +243,31 @@ export async function secretRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({ error: 'Failed to delete team due to database constraints.' });
     }
   });
+
+  fastify.delete('/admin/users/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!verifyAdmin(request.user.userId)) return reply.status(403).send({ error: 'Admin only' });
+    const { userId } = request.params as { userId: string };
+
+    try {
+      // Execute sequentially without a complex transaction to isolate failures
+      db.delete(userTeams).where(eq(userTeams.userId, userId)).run();
+      db.delete(acls).where(and(eq(acls.targetType, 'USER'), eq(acls.targetId, userId))).run();
+      db.delete(secrets).where(eq(secrets.ownerId, userId)).run();
+      
+      const result = db.delete(users).where(eq(users.id, userId)).returning().get();
+      
+      if (!result) {
+        return reply.status(444).send({ error: 'User not found in database' });
+      }
+
+      return { success: true, deletedUser: result };
+    } catch (error) {
+      fastify.log.error(error); // This will spit out the real SQLite error in your backend logs
+      return reply.status(500).send({ error: 'Failed to delete user due to database constraints.' });
+    }
+  });
+
 }
+
 
 

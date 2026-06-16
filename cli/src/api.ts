@@ -65,6 +65,15 @@ export async function createSecret(key: string, value: string) {
   return await response.json();
 }
 
+
+export const apiAddSecretPermission = async (secretId: string, targetType: string, targetId: string) => {
+  return fetch(`${BASE_URL}/secrets/${secretId}/permissions`, {
+    method: 'POST',
+    headers: getJsonHeaders(), // Uses JSON headers because it sends a data payload
+    body: JSON.stringify({ targetType, targetId, canRead: true, canWrite: true })
+  });
+};
+
 export function logout() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -108,7 +117,13 @@ export const apiDeleteTeam = async (teamId: string) => fetch(`${BASE_URL}/admin/
 
 export const apiCreateSecret = async (key: string, value: string, permissions: any[]) => fetch(`${BASE_URL}/secrets`, { method: 'POST', headers: getJsonHeaders(), body: JSON.stringify({ key, value, permissions }) });
 
-
+export const apiManageSecretPermission = async (secretId: string, targetType: string, targetId: string, action: 'GRANT' | 'REVOKE') => {
+  return fetch(`${BASE_URL}/secrets/${secretId}/permissions`, {
+    method: 'POST',
+    headers: getJsonHeaders(),
+    body: JSON.stringify({ targetType, targetId, action })
+  });
+};
 
 function getHeaders() {
   const token = getSavedToken(); // your existing token fetcher
