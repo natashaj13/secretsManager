@@ -1,0 +1,96 @@
+import fs from 'fs';
+import path from 'path';
+
+const CONFIG_PATH = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.secret-manager-token.json');
+const BASE_URL = 'http://localhost:4000';
+
+// Internal helper to read the saved token
+function getSavedToken(): string | null {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      const data = fs.readFileSync(CONFIG_PATH, 'utf-8');
+      return JSON.parse(data).token || null;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+// 1. Fetch authorized secrets from the backend
+export async function fetchSecrets() {
+  const token = getSavedToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const response = await fetch(`${BASE_URL}/secrets`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+
+  if (!response.ok) throw new Error('Failed to fetch secrets');
+  const data = await response.json();
+  return data.secrets || [];
+}
+
+// 2. Create a new secret pair
+export async function createSecret(key: string, value: string) {
+  const token = getSavedToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const response = await fetch(`${BASE_URL}/secrets`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ key, value })
+  });
+
+  if (!response.ok) throw new Error('Failed to save secret');
+  return await response.json();
+}
+
+export function logout() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      fs.unlinkSync(CONFIG_PATH);
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function fetchDirectory() {
+  const token = getSavedToken();
+  const response = await fetch(`${BASE_URL}/directory`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  return await response.json(); // Returns { users: [], teams: [] }
+}
+
+export async function promoteUser(targetUserId: string) {
+  const token = getSavedToken();
+  await fetch(`${BASE_URL}/admin/users/promote`, {
+    method: 'PUT',
+    headers: { 
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json' 
+    },
+    body: JSON.stringify({ targetUserId })
+  });
+}
+
+
+export const apiCreateUser = async (email: string) => fetch(`${BASE_URL}/admin/users`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ email }) });
+export const apiCreateTeam = async (name: string) => fetch(`${BASE_URL}/admin/teams`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ name }) });
+export const apiAssignUser = async (userId: string, teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}/members`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ targetUserId: userId }) });
+export const apiPromoteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}/promote`, { method: 'PUT', headers: getHeaders() });
+export const apiDeleteUser = async (userId: string) => fetch(`${BASE_URL}/admin/users/${userId}`, { method: 'DELETE', headers: getHeaders() });
+export const apiDeleteTeam = async (teamId: string) => fetch(`${BASE_URL}/admin/teams/${teamId}`, { method: 'DELETE', headers: getHeaders() });
+
+export const apiCreateSecret = async (key: string, value: string, permissions: any[]) => fetch(`${BASE_URL}/secrets`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ key, value, permissions }) });
+
+function getHeaders() {
+  const token = getSavedToken(); // your existing token fetcher
+  return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+}

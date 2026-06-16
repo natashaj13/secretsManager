@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",                  // Crucial for modern Node imports
+    "moduleResolution": "NodeNext",          // Crucial for finding node_modules
+    "esModuleInterop": true,                // Allows seamless importing of CommonJS modules like jsonwebtoken
+    "strict": true,
+    "skipLibCheck": true
+  }
+}
