@@ -1,36 +1,80 @@
-1. Backend Setup
-Navigate into the backend directory and install the dependencies:
+# Secrets Manager Setup
 
-Bash
+Follow these steps to initialize your local development environment. Ensure you have two separate terminal splits or windows open to run the services simultaneously.
+
+---
+
+## 1. Backend Service Setup
+
+### Install Dependencies
+
+Navigate into the backend project root and install the required modules:
+
+```bash
 cd backend
 npm install
-Create a .env file in the root of the backend/ folder and paste your exact environment variables:
 
-Code snippet
+```
+
+### Configure Environment
+
+Create a `.env` file in the root of your `backend/` folder and populate it with your GitHub OAuth and JWT security strings:
+
+```env
 GITHUB_CLIENT_ID="id"
 GITHUB_CLIENT_SECRET="secret"
 JWT_SECRET="your-secret-key"
 
-Initialize your SQLite database structure using Drizzle Kit:
-Bash
-# Generate the SQL migration files
+```
+
+### Database Initialization
+
+Generate your migration files and sync your local SQLite file layout directly using Drizzle Kit:
+
+```bash
 npx drizzle-kit generate
-
-# Push the schema changes directly to your local SQLite file
 npx drizzle-kit push
-Start the backend development server:
 
-Bash
+```
+
+### Start the Server
+
+Set up the main Fastify API compiler engine:
+
+```bash
 npx tsx src/server.ts
 
-2. CLI Setup
-Open a new terminal window or split pane, navigate to the cli/ directory, and install its dependencies:
+```
 
-Bash
+> *Keep this terminal open. The backend must be active for the CLI tool to authenticate and communicate.*
+
+---
+
+## 2. CLI Tool Setup
+
+### Install Dependencies
+
+Open a secondary split terminal window, change into the `cli/` project directory, and pull down its rendering wrappers:
+
+```bash
 cd cli
 npm install
 
-Launch the interactive terminal user interface:
+```
 
-Bash
+### Launch Terminal User Interface
+
+Boot the interactive React Ink UI matrix framework directly inside your shell prompt:
+
+```bash
 npx tsx src/index.tsx
+
+```
+
+---
+
+### Navigation Tips
+
+* Use the **Up/Down Arrow Keys** to hover over options in the menu.
+* Press **Enter** to select an action or submit input fields.
+* To exit the interface cleanly at any point, select the `Quit` prompt or press `Ctrl + C`.
