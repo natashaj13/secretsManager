@@ -110,12 +110,52 @@ export async function secretRoutes(fastify: FastifyInstance) {
 
 
   // GET /directory - show all teams and users in org
-  fastify.get('/directory', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { orgId } = request.user;
-    const orgUsers = db.select({ id: users.id, email: users.email, isAdmin: users.isAdmin }).from(users).where(eq(users.organizationId, orgId)).all();
-    const orgTeams = db.select({ id: teams.id, name: teams.name }).from(teams).where(eq(teams.organizationId, orgId)).all();
-    return { users: orgUsers, teams: orgTeams };
-  });
+// backend/src/routes.ts
+
+fastify.get('/directory', async (request: FastifyRequest, reply: FastifyReply) => {
+  try {
+    const { userId } = request.user;
+
+    //find org based on user
+    const userRecord = db.select().from(users).where(eq(users.id, userId)).get();
+    if (!userRecord) return reply.status(404).send({ error: 'User workspace not found.' });
+    const orgId = userRecord.organizationId;
+
+    //get all users in org
+    const orgUsers = db.select({
+      id: users.id,
+      email: users.email,
+      isAdmin: users.isAdmin
+    }).from(users).where(eq(users.organizationId, orgId)).all();
+
+    //get all teams in org
+    const orgTeams = db.select({
+      id: teams.id,
+      name: teams.name
+    }).from(teams).where(eq(teams.organizationId, orgId)).all();
+
+    //team-user mapping
+    const teamIds = orgTeams.map(t => t.id);
+    let bridgeLinks: any[] = [];
+    
+    if (teamIds.length > 0) {
+      bridgeLinks = db.select()
+        .from(userTeams)
+        .where(inArray(userTeams.teamId, teamIds))
+        .all();
+    }
+
+    return { 
+      users: orgUsers, 
+      teams: orgTeams, 
+      userTeams: bridgeLinks 
+    };
+
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.status(500).send({ error: 'Failed to compile organization directory.' });
+  }
+});
 
 
   // POST /admin/users - create user if admin

@@ -199,20 +199,72 @@ function ListSecretsView({ secrets, onBack }: { secrets: any[], onBack: () => vo
 }
 
 //main menu
-function DirectoryView({ directory, onBack }: { directory: any, onBack: () => void }) {
+function DirectoryView({ directory, onBack }: { directory: any; onBack: () => void }) {
+  const usersList = directory?.users || [];
+  const teamsList = directory?.teams || [];
+  const userTeamsLinks = directory?.userTeams || [];
+
   return (
-    <>
-      <Text bold color="cyan">Organization Directory</Text>
-      <Box marginY={1} flexDirection="column">
-        <Text bold underline>Users:</Text>
-        {directory.users.map((u: any) => <Text key={u.id}>- {u.email} {u.isAdmin ? '(Admin)' : ''}</Text>)}
-        <Box marginTop={1}>
-          <Text bold underline>Teams:</Text>
-        </Box>
-        {directory.teams.map((t: any) => <Text key={t.id}>- {t.name}</Text>)}
+    <Box flexDirection="column" paddingX={1}>
+      {/* users */}
+      <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column" marginBottom={1}>
+        <Text bold color="cyan">USERS ({usersList.length})</Text>
+        <Text dimColor>──────────────────────────────────────────</Text>
+        {usersList.length === 0 ? (
+          <Text italic color="gray">No users in this organization.</Text>
+        ) : (
+          usersList.map((user: any) => (
+            <Box key={user.id} marginLeft={2}>
+              <Text color="white">• {user.email}</Text>
+              {user.isAdmin && <Text color="yellow" bold> [ADMIN]</Text>}
+            </Box>
+          ))
+        )}
       </Box>
-      <SelectInput items={[{ label: '⬅ Back to Menu', value: 'back' }]} onSelect={onBack} />
-    </>
+
+      {/* team-user mapping */}
+      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column" marginBottom={1}>
+        <Text bold color="magenta">TEAMS & ASSIGNED MEMBERS ({teamsList.length})</Text>
+        <Text dimColor>──────────────────────────────────────────</Text>
+        {teamsList.length === 0 ? (
+          <Text italic color="gray">No teams created</Text>
+        ) : (
+          teamsList.map((team: any) => {
+            
+            const assignedUserIds = userTeamsLinks
+              .filter((ut: any) => ut.teamId === team.id)
+              .map((ut: any) => ut.userId);
+
+            const teamMembers = usersList.filter((user: any) => assignedUserIds.includes(user.id));
+
+            return (
+              <Box key={team.id} flexDirection="column" marginBottom={1} marginLeft={1}>
+                <Text bold color="white">Team: <Text color="magenta" bold>{team.name}</Text></Text>
+                
+                {teamMembers.length === 0 ? (
+                  <Box marginLeft={4}>
+                    <Text italic color="gray">↳ No users assigned to this team yet.</Text>
+                  </Box>
+                ) : (
+                  teamMembers.map((member: any) => (
+                    <Box key={member.id} marginLeft={4}>
+                      <Text color="gray">↳ {member.email}</Text>
+                    </Box>
+                  ))
+                )}
+              </Box>
+            );
+          })
+        )}
+      </Box>
+
+      <Box marginTop={1}>
+        <SelectInput 
+          items={[{ label: '⬅ Back to Menu', value: 'back' }]} 
+          onSelect={onBack} 
+        />
+      </Box>
+    </Box>
   );
 }
 
